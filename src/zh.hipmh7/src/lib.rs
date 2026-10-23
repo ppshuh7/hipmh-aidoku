@@ -6,11 +6,11 @@ use aidoku::{
 	imports::{
 		html::ElementList,
 		net::Request,
-		std::{current_date, send_partial_result, sleep},
+		std::{current_date, sleep},
 	},
 	prelude::*,
 	Chapter, ContentRating, DynamicFilters, Filter, FilterValue, Home, HomeComponent,
-	HomeComponentValue, HomeLayout, HomePartialResult, Link, Listing, ListingProvider,
+	HomeComponentValue, HomeLayout, Link, Listing, ListingProvider,
 	Manga, MangaPageResult, MangaStatus, Page, PageContent, Result, SelectFilter, SortFilter,
 	Source, Viewer,
 };
@@ -531,13 +531,15 @@ impl Home for HipmhSource {
 			})
 		};
 
-		// Streaming layout: push five empty components right away so the
-		// home screen renders its skeleton immediately, then send each
-		// section as soon as its own request lands (the runner replaces a
-		// component by title). Sections are requested one after another
-		// because the API throttles concurrent bursts from one client; the
-		// win over the old code is that the screen is no longer blank while
-		// four sequential requests complete.
+		// Five sections, fetched in order (the API throttles bursts from one
+		// client). If any single section fails we still return the others —
+		// a dead section must not blank the whole home screen.
+		//
+		// NOTE: do *not* use send_partial_result here. The runner replaces a
+		// partial component by matching `title`, and the layout already sent
+		// by a previous call can overwrite the final result: an empty-title
+		// skeleton ends up stuck on screen (seen in v11: home rendered empty
+		// rows). A plain, complete HomeLayout is the reliable path.
 		let sections: [(&str, &str, &str, i32, bool); 5] = [
 			("近期更新", "updated", "sort=updated", 8, false),
 			("本週熱門", "weekly", "sort=popular", 10, false),
@@ -546,37 +548,35 @@ impl Home for HipmhSource {
 			("完結推薦", "completed_popular", "status=completed&sort=popular", PAGE_SIZE, false),
 		];
 
-		let empty = HomeLayout {
-			components: sections
-				.iter()
-				.map(|(title, id, _, _, _)| HomeComponent {
-					title: Some(String::from(*title)),
-					subtitle: None,
-					value: HomeComponentValue::Scroller {
-						entries: Vec::new(),
-						listing: listing(id, title),
-					},
-				})
-				.collect(),
-		};
-		send_partial_result(&HomePartialResult::Layout(empty.clone()));
-
+		let mut components: Vec<HomeComponent> = Vec::new();
 		let mut popular_fallback: Vec<Link> = Vec::new();
+		let mut first_error = None;
+
 		for (title, id, params, per_page, ranking) in sections {
-			// 本週熱門 has no API equivalent: scrape the homepage section,
-			// and fall back to the popular list if the DOM changed.
 			let links: Vec<Link> = if id == "weekly" {
+				// 本週熱門 has no API equivalent: scrape the homepage section,
+				// falling back to the popular list if the DOM changed.
 				match self.fetch_weekly_popular() {
 					Ok(l) if !l.is_empty() => l,
 					_ => popular_fallback.clone(),
 				}
 			} else {
-				let result = self.fetch_list_n(params, 1, per_page)?;
-				let links: Vec<Link> = result.entries.into_iter().map(Link::from).collect();
-				if id == "popular" {
-					popular_fallback = links.clone();
+				match self.fetch_list_n(params, 1, per_page) {
+					Ok(result) => {
+						let links: Vec<Link> = result.entries.into_iter().map(Link::from).collect();
+						if id == "popular" {
+							popular_fallback = links.clone();
+						}
+						links
+					}
+					Err(e) => {
+						// remember the first failure, keep building the rest
+						if first_error.is_none() {
+							first_error = Some(e);
+						}
+						Vec::new()
+					}
 				}
-				links
 			};
 
 			let value = if ranking {
@@ -592,14 +592,27 @@ impl Home for HipmhSource {
 					listing: listing(id, title),
 				}
 			};
-			send_partial_result(&HomePartialResult::Component(HomeComponent {
+			components.push(HomeComponent {
 				title: Some(String::from(title)),
 				subtitle: None,
 				value,
-			}));
+			});
 		}
 
-		Ok(empty)
+		// every section empty means the API/site is gone: surface the error
+		// instead of showing five blank rows
+		let any_entries = components.iter().any(|c| match &c.value {
+			HomeComponentValue::Scroller { entries, .. } => !entries.is_empty(),
+			HomeComponentValue::MangaList { entries, .. } => !entries.is_empty(),
+			_ => false,
+		});
+		if !any_entries {
+			if let Some(e) = first_error {
+				return Err(e);
+			}
+		}
+
+		Ok(HomeLayout { components })
 	}
 }
 
@@ -680,5 +693,6 @@ impl DynamicFilters for HipmhSource {
 }
 
 register_source!(HipmhSource, ListingProvider, Home, DynamicFilters);
+
 
 
