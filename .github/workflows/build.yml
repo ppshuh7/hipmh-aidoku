@@ -27,7 +27,12 @@ jobs:
 
       - name: Build source
         run: |
+          set -eux
           cd src/zh.hipmh7
+          # The committed lock pins aidoku 0.3.0 to the vendored local path,
+          # but a path->path move still rewrites it; drop it and let cargo
+          # resolve against the committed aidoku-rs-main copy.
+          rm -f Cargo.lock
           cargo build --release --target wasm32-unknown-unknown
 
       - name: Package .aix
@@ -84,3 +89,4 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./dist
           force_orphan: true
+
