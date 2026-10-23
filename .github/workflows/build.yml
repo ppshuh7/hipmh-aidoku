@@ -5,6 +5,7 @@ on:
     branches: ["main"]
     paths:
       - "src/**"
+      - "tools/**"
       - ".github/workflows/build.yml"
   workflow_dispatch:
 
@@ -15,10 +16,8 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v5
-
-      # src/zh.hipmh7/Cargo.lock is committed, so CI restores the exact
-      # dependency graph the wasm was verified against. Nothing to regenerate.
+      - name: Checkout
+        uses: actions/checkout@v5
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -27,76 +26,12 @@ jobs:
 
       - name: Build source
         run: |
-          set -eux
           cd src/zh.hipmh7
-          # The committed lock pins aidoku 0.3.0 to the vendored local path,
-          # but a path->path move still rewrites it; drop it and let cargo
-          # resolve against the committed aidoku-rs-main copy.
           rm -f Cargo.lock
           cargo build --release --target wasm32-unknown-unknown
 
-      - name: Package .aix
-        run: |
-          set -e
-          STAGE="$RUNNER_TEMP/stage"
-          echo "STAGE_DIR=$STAGE" >> "$GITHUB_ENV"
-          mkdir -p "$STAGE/Payload"
-          cp src/zh.hipmh7/target/wasm32-unknown-unknown/release/hipmh.wasm "$STAGE/Payload/main.wasm"
-          cp src/zh.hipmh7/res/source.json "$STAGE/Payload/source.json"
-          cp src/zh.hipmh7/res/icon.png "$STAGE/Payload/icon.png"
-          # Ubuntu's GNU tar has no --format zip (that's a bsdtar extension).
-          # Use python's zipfile so paths stay forward-slash and Payload/ is
-          # the only top-level entry, exactly like the local build.cmd output.
-          python3 - <<'PY'
-import os, zipfile
-stage = os.environ["STAGE_DIR"]
-out = os.path.join(stage, "package.aix")
-with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
-    for root, _, files in os.walk(os.path.join(stage, "Payload")):
-        for name in files:
-            full = os.path.join(root, name)
-            arc = os.path.relpath(full, stage).replace(os.sep, "/")
-            z.write(full, arc)
-with zipfile.ZipFile(out) as z:
-    print("aix entries:", z.namelist())
-PY
-          VERSION=$(python3 -c "import json;print(json.load(open('src/zh.hipmh7/res/source.json'))['info']['version'])")
-          mkdir -p dist
-          cp "$STAGE/package.aix" "dist/zh.hipmh-v${VERSION}.aix"
-          cp "$STAGE/package.aix" "dist/zh.hipmh.aix"
-          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
-
-      - name: Generate list.json
-        run: |
-          python3 - <<'PY'
-          import json, os, pathlib
-          version = int(os.environ["VERSION"])
-          info = json.load(open("src/zh.hipmh7/res/source.json"))["info"]
-          # Relative URLs: Aidoku resolves them against the list.json URL
-          # itself (SourceList.swift -> ExternalSourceInfo.fileURL), so cdn /
-          # mirror rewrites keep working.
-          entry = {
-              "id": info["id"],
-              "name": info["name"],
-              "version": version,
-              "downloadURL": f"zh.hipmh-v{version}.aix",
-              "iconURL": "icon.png",
-              "languages": info.get("languages", ["zh"]),
-              "contentRating": info.get("contentRating", 0),
-              "altNames": ["hipmh", "Hippi Comics"],
-              "minAppVersion": "0.7",
-          }
-          out = {"name": "嬉皮漫画 图源列表", "sources": [entry]}
-          pathlib.Path("dist/list.json").write_text(json.dumps(out, ensure_ascii=False, indent=2))
-          pathlib.Path("dist/index.min.json").write_text(json.dumps([entry], ensure_ascii=False, separators=(",", ":")))
-PY
-          cat dist/list.json
-
-      - name: Add icon and README
-        run: |
-          set -e
-          cp src/zh.hipmh7/res/icon.png dist/icon.png
-          printf '# 嬉皮漫画 Aidoku 图源（zh.hipmh）\n\n当前版本：v%s\n\n在 Aidoku「浏览 → 右上角 + → 图源列表」里粘贴：\n\n    <Pages 地址>/list.json\n\n以后在「更新」区点一下即可自动升级，无需 AirDrop。\n' "$VERSION" > dist/README.md
+      - name: Package aix and regenerate list
+        run: python3 tools/package.py
 
       - name: Upload aix (debug)
         if: always()
@@ -107,13 +42,9 @@ PY
           if-no-files-found: warn
 
       - name: Deploy to gh-pages
+        if: success()
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./dist
           force_orphan: true
-
-
-
-
-
