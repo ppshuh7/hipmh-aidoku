@@ -74,6 +74,11 @@ def write_dist(aix_path):
     with open(os.path.join(DIST, "index.min.json"), "w", encoding="utf-8") as f:
         json.dump([entry], f, ensure_ascii=False, separators=(",", ":"))
 
+    # Same payload under a second filename: jsdelivr caches /list.json very
+    # aggressively (it kept serving an old version after a purge), while the
+    # versioned .aix filenames are always fresh. The app only needs *a* URL.
+    shutil.copyfile(os.path.join(DIST, "list.json"), os.path.join(DIST, "sources.json"))
+
     with open(os.path.join(DIST, "README.md"), "w", encoding="utf-8") as f:
         f.write(
             "# 嬉皮漫画 Aidoku 图源（zh.hipmh）\n\n"
@@ -98,3 +103,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
