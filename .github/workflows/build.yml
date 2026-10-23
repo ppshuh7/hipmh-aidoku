@@ -15,7 +15,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # src/zh.hipmh7/Cargo.lock is committed, so CI restores the exact
       # dependency graph the wasm was verified against. Nothing to regenerate.
@@ -98,12 +98,22 @@ PY
           cp src/zh.hipmh7/res/icon.png dist/icon.png
           printf '# 嬉皮漫画 Aidoku 图源（zh.hipmh）\n\n当前版本：v%s\n\n在 Aidoku「浏览 → 右上角 + → 图源列表」里粘贴：\n\n    <Pages 地址>/list.json\n\n以后在「更新」区点一下即可自动升级，无需 AirDrop。\n' "$VERSION" > dist/README.md
 
+      - name: Upload aix (debug)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: aix
+          path: dist/
+          if-no-files-found: warn
+
       - name: Deploy to gh-pages
         uses: peaceiris/actions-gh-pages@v4
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./dist
           force_orphan: true
+
+
 
 
 
