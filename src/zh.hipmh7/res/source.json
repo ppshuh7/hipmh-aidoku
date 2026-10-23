@@ -2,7 +2,7 @@
   "info": {
     "id": "zh.hipmh",
     "name": "嬉皮漫画",
-    "version": 11,
+    "version": 12,
     "languages": ["zh"],
     "contentRating": 1,
     "url": "https://m.hipmh.com"
@@ -17,3 +17,4 @@
     "hidesFiltersWhileSearching": false
   }
 }
+
