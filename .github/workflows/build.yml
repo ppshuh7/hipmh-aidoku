@@ -39,12 +39,27 @@ jobs:
         run: |
           set -e
           STAGE="$RUNNER_TEMP/stage"
+          echo "STAGE_DIR=$STAGE" >> "$GITHUB_ENV"
           mkdir -p "$STAGE/Payload"
           cp src/zh.hipmh7/target/wasm32-unknown-unknown/release/hipmh.wasm "$STAGE/Payload/main.wasm"
           cp src/zh.hipmh7/res/source.json "$STAGE/Payload/source.json"
           cp src/zh.hipmh7/res/icon.png "$STAGE/Payload/icon.png"
-          # bsdtar with forward slashes (PowerShell Compress-Archive breaks this)
-          tar --format zip -cf "$STAGE/package.aix" -C "$STAGE" Payload
+          # Ubuntu's GNU tar has no --format zip (that's a bsdtar extension).
+          # Use python's zipfile so paths stay forward-slash and Payload/ is
+          # the only top-level entry, exactly like the local build.cmd output.
+          python3 - <<'PY'
+import os, zipfile
+stage = os.environ["STAGE_DIR"]
+out = os.path.join(stage, "package.aix")
+with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+    for root, _, files in os.walk(os.path.join(stage, "Payload")):
+        for name in files:
+            full = os.path.join(root, name)
+            arc = os.path.relpath(full, stage).replace(os.sep, "/")
+            z.write(full, arc)
+with zipfile.ZipFile(out) as z:
+    print("aix entries:", z.namelist())
+PY
           VERSION=$(python3 -c "import json;print(json.load(open('src/zh.hipmh7/res/source.json'))['info']['version'])")
           mkdir -p dist
           cp "$STAGE/package.aix" "dist/zh.hipmh-v${VERSION}.aix"
@@ -74,7 +89,7 @@ jobs:
           out = {"name": "嬉皮漫画 图源列表", "sources": [entry]}
           pathlib.Path("dist/list.json").write_text(json.dumps(out, ensure_ascii=False, indent=2))
           pathlib.Path("dist/index.min.json").write_text(json.dumps([entry], ensure_ascii=False, separators=(",", ":")))
-          PY
+PY
           cat dist/list.json
 
       - name: Add icon and README
@@ -89,4 +104,6 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           publish_dir: ./dist
           force_orphan: true
+
+
 
