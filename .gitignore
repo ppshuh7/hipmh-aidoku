@@ -1,0 +1,12 @@
+# build artifacts
+target/
+stage/
+*.aix
+!dist/*.aix
+
+# OS / editor
+.DS_Store
+Thumbs.db
+
+# local-only copies
+aidoku-rs-main/.git/

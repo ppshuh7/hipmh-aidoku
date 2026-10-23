@@ -1,0 +1,21 @@
+[package]
+name = "hipmh"
+version = "0.1.0"
+edition = "2024"
+
+# aidoku-rs pinned to the same git rev the project has always used (b081870).
+# Kept as a local path dep so the build never needs to reach GitHub;
+# aidoku-rs-main/ is the verbatim source of that rev.
+[dependencies]
+aidoku = { path = "../../aidoku-rs-main/crates/lib" }
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1", default-features = false, features = ["alloc"] }
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+panic = "abort"
+opt-level = "s"
+strip = true
+lto = true

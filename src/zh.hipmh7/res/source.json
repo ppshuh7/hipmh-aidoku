@@ -1,0 +1,19 @@
+{
+  "info": {
+    "id": "zh.hipmh",
+    "name": "嬉皮漫画",
+    "version": 11,
+    "languages": ["zh"],
+    "contentRating": 1,
+    "url": "https://m.hipmh.com"
+  },
+  "listings": [
+    { "id": "ko", "name": "韩漫" },
+    { "id": "cn", "name": "国漫" },
+    { "id": "ongoing", "name": "连载中" },
+    { "id": "completed", "name": "完结" }
+  ],
+  "config": {
+    "hidesFiltersWhileSearching": false
+  }
+}
