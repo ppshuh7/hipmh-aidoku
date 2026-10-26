@@ -369,6 +369,15 @@ impl Source for HipmhSource {
 		let mid = extract_mid(&manga.key).ok_or_else(|| error!("bad manga key {}", manga.key))?;
 		let mid_param = mid_b64(&mid);
 
+		// Details and chapters are two independent requests. Start the chapter
+		// page first (it is the slower one) and fetch details around it, so a
+		// refresh costs max(details, chapters) instead of their sum.
+		let chapter_prefetch: Option<Result<Vec<Chapter>>> = if needs_chapters {
+			Some(self.fetch_chapter_page(&mid_param, 1))
+		} else {
+			None
+		};
+
 		if needs_details {
 			let url = format!("{API}/v1/manga?mid={mid_param}");
 			let data: ApiResp<ApiDetails> = get_json(&url)?;
@@ -415,25 +424,23 @@ impl Source for HipmhSource {
 			// on every pull-to-refresh (which used to cost 14 pages × 2s on a
 			// 690-chapter title).
 			let known: Vec<Chapter> = manga.chapters.take().unwrap_or_default();
-			let newest_known = known
-				.iter()
-				.filter_map(|c| c.chapter_number)
-				.fold(f32::NEG_INFINITY, f32::max);
 
-			// Page 1 (newest) first — this is all an up-to-date series needs.
-			let mut chapters = self.fetch_chapter_page(&mid_param, 1)?;
-			let fresh = chapters.len();
+			// Page 1 (newest first) is all an up-to-date series needs: a series
+			// that already has chapters in the library only ever grows at the
+			// top, so further pages would be re-downloading what Aidoku already
+			// has. That is what made a large library refresh crawl — every one
+			// of N titles cost (pages × 1s sleep + round-trips).
+			let mut chapters = match chapter_prefetch {
+				Some(r) => r?,
+				None => self.fetch_chapter_page(&mid_param, 1)?,
+			};
 			let total_pages = LAST_TOTAL_PAGES.load(Ordering::Relaxed);
-			let newest_seen = chapters
-				.iter()
-				.filter_map(|c| c.chapter_number)
-				.fold(f32::NEG_INFINITY, f32::max);
 
-			// Fetch the remaining pages only when the newest page did not already
-			// cover everything we have (deep backfill, first load, big gaps).
-			let need_backfill = fresh >= CHAPTER_PER_PAGE as usize
-				&& (known.is_empty() || newest_seen > newest_known);
-			if need_backfill {
+			// Deep backfill only for a title the library has never seen. The
+			// user explicitly chose this trade-off: library titles are not
+			// extended downwards on refresh (reading progress is keyed by
+			// chapter key, so nothing is lost), new titles still arrive whole.
+			if known.is_empty() && total_pages > 1 {
 				let mut page = 2;
 				let mut failed_pages = 0;
 				while page <= total_pages && page <= 200 {
@@ -454,20 +461,20 @@ impl Source for HipmhSource {
 				}
 			}
 
-			// Everything below the oldest freshly fetched chapter is already in
-			// the library; re-emit those entries (same key => same row, no
-			// re-read) so Aidoku keeps showing the full history.
+			// Re-emit the chapters the library already has (same key => same
+			// row) so Aidoku keeps rendering the full history instead of
+			// deleting whatever this call did not return.
 			if let Some(oldest_fresh) = chapters
 				.iter()
 				.filter_map(|c| c.chapter_number)
 				.fold(None::<f32>, |acc, n| Some(acc.map_or(n, |a| a.min(n))))
 			{
 				for chapter in known {
-					if chapter.chapter_number.map_or(false, |n| n < oldest_fresh) {
-						chapters.push(chapter);
-					} else if chapter.chapter_number.is_none() {
-						// unnumbered entries: keep whatever the library already had
-						chapters.push(chapter);
+					match chapter.chapter_number {
+						Some(n) if n < oldest_fresh => chapters.push(chapter),
+						// unnumbered entries: keep whatever the library had
+						None => chapters.push(chapter),
+						_ => {}
 					}
 				}
 			} else {
