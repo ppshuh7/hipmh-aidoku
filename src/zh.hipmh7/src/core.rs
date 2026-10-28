@@ -9,7 +9,30 @@ use serde::Deserialize;
 pub const API: &str = "https://hipapi1.s3file.top";
 pub const SITE: &str = "https://m.hipmh.com";
 pub const COVER_CDN: &str = "https://cover.s3imgs.top";
-pub const IMG_CDN: &str = "https://hip-tx-1.s3imgs.top";
+
+/// Chapter image hosts, ordered by measured speed from this network.
+///
+/// The reader page ships `data-chapter-img-base-line1/line2` and its JS uses
+/// `line1` unless the user switched lines (`localStorage["chapterApiLine"]`).
+/// Measured over 3 rounds × 10 sequential images + 6 concurrent prefetches:
+///   cf-1 line: 1.58s/img sequential, 1.75s per 6-image batch
+///   tx-1 line: 2.83s/img sequential, 3.19s per batch (and it resets
+///              connections under concurrency)
+/// Mixing the two is *worse* than cf-1 alone (2.53s/img) because every tx-1
+/// image drags the batch down, so the first entry is used for everything and
+/// the rest is only a documented fallback.
+pub const IMG_HOSTS: [&str; 2] = [
+	"https://hip-cf-1.s3imgs.top",
+	"https://hip-tx-1.s3imgs.top",
+];
+
+/// The single host used for page images (see IMG_HOSTS for why).
+pub const IMG_CDN: &str = IMG_HOSTS[0];
+/// Thumbnail (`-s1`) line, documented for completeness; the reader does not
+/// use it (the full-size line serves thumbnails fine).
+#[allow(dead_code)]
+pub const IMG_CDN_SMALL: &str = "https://hip-cf-s1.s3imgs.top";
+
 pub const PAGE_SIZE: i32 = 20;
 
 // ---------------------------------------------------------------------------

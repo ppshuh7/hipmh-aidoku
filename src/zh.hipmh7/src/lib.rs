@@ -499,7 +499,13 @@ impl Source for HipmhSource {
 		let data = data.data.ok_or_else(|| error!("no chapter data"))?;
 		let images = data.images.ok_or_else(|| error!("no images"))?;
 		let decoded = decode_images(&images).map_err(|e| error!("decode: {e}"))?;
-		let pages = remove_decoy(decoded, data.order_id, data.sid)
+		let paths = remove_decoy(decoded, data.order_id, data.sid);
+
+		// All pages go through the fastest image line (see core::IMG_HOSTS).
+		// Alternating between the two lines was measured to be *slower* than
+		// using the `cf-1` line alone, because the `tx-1` line both throttles
+		// and resets connections.
+		let pages = paths
 			.into_iter()
 			.map(|path| Page {
 				content: PageContent::url(format!("{IMG_CDN}{path}")),
@@ -700,6 +706,8 @@ impl DynamicFilters for HipmhSource {
 }
 
 register_source!(HipmhSource, ListingProvider, Home, DynamicFilters);
+
+
 
 
 
