@@ -38,6 +38,9 @@ pub const IMG_CDN_SMALL: &str = "https://hip-cf-s1.s3imgs.top";
 /// Settings key for the image line choice ("cf1" | "tx1").
 pub const SETTING_IMG_LINE: &str = "img_line";
 
+/// Settings key for how deep a chapter refresh goes ("latest" | "full").
+pub const SETTING_REFRESH_DEPTH: &str = "refresh_depth";
+
 /// Resolve the image base URL for a settings value.
 ///
 /// Accepts the setting's stored string; anything unknown falls back to the
@@ -47,6 +50,26 @@ pub fn img_base(line: Option<&str>) -> &'static str {
 		Some("tx1") => IMG_HOSTS[1],
 		_ => IMG_HOSTS[0],
 	}
+}
+
+/// How many chapters a refresh returns at most.
+///
+/// Aidoku's `setChapters` matches existing rows with a linear scan per
+/// chapter, so handing back a 700-entry list makes the *database* side
+/// quadratic; the extra entries are also re-sent over the wasm/JSON boundary
+/// for nothing. A window this wide covers every realistic update gap while
+/// keeping the payload ~1/15th of a full list.
+pub const CHAPTER_RETURN_LIMIT: usize = 200;
+
+/// Whether a refresh should keep paging through older chapters.
+///
+/// `latest` (default): always exactly one page — the shelf refresh used to
+/// cost 14 pages × (round-trip + 1s sleep) per long title because Aidoku does
+/// not always hand the library's chapters back to the source, so the old
+/// "library already has chapters?" test silently degraded to a full crawl.
+/// `full`: the old behaviour, for when a title needs its history rebuilt.
+pub fn refresh_full(depth: Option<&str>) -> bool {
+	matches!(depth, Some("full"))
 }
 
 pub const PAGE_SIZE: i32 = 20;

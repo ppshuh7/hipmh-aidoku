@@ -40,7 +40,8 @@ use crate::core::{
 	ApiChapter, ApiDetails, ApiManga, ApiResp, ChapterImages, ChapterListData, ListData,
 	Rating, SearchData,
 	chapter_key, decode_images, extract_mid, mid_b64, parse_iso_epoch, percent_encode,
-	short_hid_from_key, img_base, API, COVER_CDN, PAGE_SIZE, SETTING_IMG_LINE, SITE, remove_decoy,
+	short_hid_from_key, img_base, refresh_full, API, CHAPTER_RETURN_LIMIT, COVER_CDN,
+	PAGE_SIZE, SETTING_IMG_LINE, SETTING_REFRESH_DEPTH, SITE, remove_decoy,
 };
 
 const UA: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
@@ -241,8 +242,7 @@ impl HipmhSource {
 			return Err(error!("no weekly cards"));
 		}
 		let has_next = doc
-			.select_first("a.pagination-next")
-			.map(|a| a.attr("aria-disabled").as_deref() != Some("true"))
+			.select_first("a.pagination-next")			.map(|a| a.attr("aria-disabled").as_deref() != Some("true"))
 			.unwrap_or(false);
 		Ok(MangaPageResult {
 			entries,
@@ -426,22 +426,24 @@ impl Source for HipmhSource {
 			// 690-chapter title).
 			let known: Vec<Chapter> = manga.chapters.take().unwrap_or_default();
 
-			// Page 1 (newest first) is all an up-to-date series needs: a series
-			// that already has chapters in the library only ever grows at the
-			// top, so further pages would be re-downloading what Aidoku already
-			// has. That is what made a large library refresh crawl — every one
-			// of N titles cost (pages × 1s sleep + round-trips).
+			// Whether to keep paging through older chapters. Default is
+			// "latest only": Aidoku does not reliably pass the library's
+			// chapters back into the source during a shelf refresh, so keying
+			// the decision on `known.is_empty()` degraded into a full crawl
+			// (14 pages × (round-trip + 1s) on a 700-chapter title) for every
+			// long book in the library. The user can pick "完整" in settings.
+			let full = refresh_full(defaults_get::<String>(SETTING_REFRESH_DEPTH).as_deref());
+
+			// Page 1 (newest first) is all an up-to-date series needs.
 			let mut chapters = match chapter_prefetch {
 				Some(r) => r?,
 				None => self.fetch_chapter_page(&mid_param, 1)?,
 			};
 			let total_pages = LAST_TOTAL_PAGES.load(Ordering::Relaxed);
 
-			// Deep backfill only for a title the library has never seen. The
-			// user explicitly chose this trade-off: library titles are not
-			// extended downwards on refresh (reading progress is keyed by
-			// chapter key, so nothing is lost), new titles still arrive whole.
-			if known.is_empty() && total_pages > 1 {
+			// Deep backfill only in "完整" mode, and only when we have nothing
+			// to go on (a brand-new title, or the library asked for a rebuild).
+			if full && (known.is_empty() || chapters.len() >= CHAPTER_PER_PAGE as usize) && total_pages > 1 {
 				let mut page = 2;
 				let mut failed_pages = 0;
 				while page <= total_pages && page <= 200 {
@@ -487,6 +489,17 @@ impl Source for HipmhSource {
 					.unwrap_or(0.0)
 					.total_cmp(&a.chapter_number.unwrap_or(0.0))
 			});
+
+			// Cap what we hand back. Aidoku's chapter upsert does a linear
+			// scan per chapter, so a 700-entry payload makes the DB side
+			// quadratic and drags the whole shelf refresh; 200 entries cover
+			// any realistic update gap while keeping old rows untouched (a
+			// chapter missing from our reply is not deleted by Aidoku — see
+			// CoreDataManager.setChapters, which only removes rows it can
+			// match *and* update).
+			if chapters.len() > CHAPTER_RETURN_LIMIT {
+				chapters.truncate(CHAPTER_RETURN_LIMIT);
+			}
 			manga.chapters = Some(chapters);
 		}
 
@@ -721,11 +734,25 @@ impl DynamicSettings for HipmhSource {
 				..Default::default()
 			}
 			.into(),
+			SelectSetting {
+				key: Cow::Borrowed(SETTING_REFRESH_DEPTH),
+				title: Cow::Borrowed("刷新深度"),
+				values: vec![Cow::Borrowed("latest"), Cow::Borrowed("full")],
+				titles: Some(vec![
+					Cow::Borrowed("仅最新（推荐·书架刷新快）"),
+					Cow::Borrowed("完整（重建历史章节）"),
+				]),
+				auth_to_open: Some(false),
+				default: Some(String::from("latest")),
+				..Default::default()
+			}
+			.into(),
 		])
 	}
 }
 
 register_source!(HipmhSource, ListingProvider, Home, DynamicFilters, DynamicSettings);
+
 
 
 
