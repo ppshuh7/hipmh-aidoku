@@ -4,15 +4,16 @@ mod core;
 use aidoku::{
 	alloc::{borrow::Cow, format, string::String, string::ToString, vec, vec::Vec},
 	imports::{
+		defaults::defaults_get,
 		html::ElementList,
 		net::Request,
 		std::{current_date, sleep},
 	},
 	prelude::*,
-	Chapter, ContentRating, DynamicFilters, Filter, FilterValue, Home, HomeComponent,
-	HomeComponentValue, HomeLayout, Link, Listing, ListingProvider,
-	Manga, MangaPageResult, MangaStatus, Page, PageContent, Result, SelectFilter, SortFilter,
-	Source, Viewer,
+	Chapter, ContentRating, DynamicFilters, DynamicSettings, Filter, FilterValue, Home, HomeComponent,
+	HomeComponentValue, HomeLayout, Link, Listing, ListingProvider, Manga, MangaPageResult,
+	MangaStatus, Page, PageContent, Result, SelectFilter, SelectSetting, Setting, SortFilter, Source,
+	Viewer,
 };
 use serde::Deserialize;
 use ::core::sync::atomic::Ordering;
@@ -39,7 +40,7 @@ use crate::core::{
 	ApiChapter, ApiDetails, ApiManga, ApiResp, ChapterImages, ChapterListData, ListData,
 	Rating, SearchData,
 	chapter_key, decode_images, extract_mid, mid_b64, parse_iso_epoch, percent_encode,
-	short_hid_from_key, API, COVER_CDN, IMG_CDN, PAGE_SIZE, SITE, remove_decoy,
+	short_hid_from_key, img_base, API, COVER_CDN, PAGE_SIZE, SETTING_IMG_LINE, SITE, remove_decoy,
 };
 
 const UA: &str = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1";
@@ -501,14 +502,13 @@ impl Source for HipmhSource {
 		let decoded = decode_images(&images).map_err(|e| error!("decode: {e}"))?;
 		let paths = remove_decoy(decoded, data.order_id, data.sid);
 
-		// All pages go through the fastest image line (see core::IMG_HOSTS).
-		// Alternating between the two lines was measured to be *slower* than
-		// using the `cf-1` line alone, because the `tx-1` line both throttles
-		// and resets connections.
+		// Page images follow the user's line choice (see the settings page);
+		// the default is the `cf-1` line, measured ~44% faster than `tx-1`.
+		let base = img_base(defaults_get::<String>(SETTING_IMG_LINE).as_deref());
 		let pages = paths
 			.into_iter()
 			.map(|path| Page {
-				content: PageContent::url(format!("{IMG_CDN}{path}")),
+				content: PageContent::url(format!("{base}{path}")),
 				..Default::default()
 			})
 			.collect();
@@ -705,7 +705,28 @@ impl DynamicFilters for HipmhSource {
 	}
 }
 
-register_source!(HipmhSource, ListingProvider, Home, DynamicFilters);
+impl DynamicSettings for HipmhSource {
+	fn get_dynamic_settings(&self) -> Result<Vec<Setting>> {
+		Ok(vec![
+			SelectSetting {
+				key: Cow::Borrowed(SETTING_IMG_LINE),
+				title: Cow::Borrowed("图片线路"),
+				values: vec![Cow::Borrowed("cf1"), Cow::Borrowed("tx1")],
+				titles: Some(vec![
+					Cow::Borrowed("CF 线路（推荐·更快）"),
+					Cow::Borrowed("TX 线路（备用）"),
+				]),
+				auth_to_open: Some(false),
+				default: Some(String::from("cf1")),
+				..Default::default()
+			}
+			.into(),
+		])
+	}
+}
+
+register_source!(HipmhSource, ListingProvider, Home, DynamicFilters, DynamicSettings);
+
 
 
 

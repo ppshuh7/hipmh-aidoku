@@ -19,19 +19,35 @@ pub const COVER_CDN: &str = "https://cover.s3imgs.top";
 ///   tx-1 line: 2.83s/img sequential, 3.19s per batch (and it resets
 ///              connections under concurrency)
 /// Mixing the two is *worse* than cf-1 alone (2.53s/img) because every tx-1
-/// image drags the batch down, so the first entry is used for everything and
-/// the rest is only a documented fallback.
+/// image drags the batch down, so the default is cf-1 only. Users can switch
+/// lines in the source settings (see `Settings` below).
 pub const IMG_HOSTS: [&str; 2] = [
 	"https://hip-cf-1.s3imgs.top",
 	"https://hip-tx-1.s3imgs.top",
 ];
 
-/// The single host used for page images (see IMG_HOSTS for why).
+/// The default page-image host (kept for tests/docs; runtime resolves through
+/// `img_base` so the user's setting wins).
+#[allow(dead_code)]
 pub const IMG_CDN: &str = IMG_HOSTS[0];
 /// Thumbnail (`-s1`) line, documented for completeness; the reader does not
 /// use it (the full-size line serves thumbnails fine).
 #[allow(dead_code)]
 pub const IMG_CDN_SMALL: &str = "https://hip-cf-s1.s3imgs.top";
+
+/// Settings key for the image line choice ("cf1" | "tx1").
+pub const SETTING_IMG_LINE: &str = "img_line";
+
+/// Resolve the image base URL for a settings value.
+///
+/// Accepts the setting's stored string; anything unknown falls back to the
+/// default line, so a bad value can never break reading.
+pub fn img_base(line: Option<&str>) -> &'static str {
+	match line {
+		Some("tx1") => IMG_HOSTS[1],
+		_ => IMG_HOSTS[0],
+	}
+}
 
 pub const PAGE_SIZE: i32 = 20;
 
