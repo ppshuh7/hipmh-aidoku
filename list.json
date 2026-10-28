@@ -1,0 +1,21 @@
+{
+  "name": "嬉皮漫画 图源列表",
+  "sources": [
+    {
+      "id": "zh.hipmh",
+      "name": "嬉皮漫画",
+      "version": 15,
+      "downloadURL": "zh.hipmh-v15.aix",
+      "iconURL": "icon.png",
+      "languages": [
+        "zh"
+      ],
+      "contentRating": 1,
+      "altNames": [
+        "hipmh",
+        "Hippi Comics"
+      ],
+      "minAppVersion": "0.7"
+    }
+  ]
+}
