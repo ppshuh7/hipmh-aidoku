@@ -82,16 +82,29 @@ git push -u origin main
 Aidoku「浏览」→ 右上角 **+** → **图源列表**（或设置里的源列表），粘贴：
 
 ```
-https://<你的用户名>.github.io/<仓库名>/list.json
+https://<你的用户名>.github.io/<仓库名>/sources.json
 ```
 
-添加后，「浏览」页就会出现 **嬉皮漫画**；当前手机装的是 v11，所以此时"更新"区是空的（已是最新）。
+**用 Pages 直连，不要用 jsdelivr**（2026-11-17 实测结论）：
 
-> 国内直连 `github.io` 可能不稳。如果 App 里加载失败，换成镜像前缀（实测都能取到 GitHub 文件）：
-> - `https://gh-proxy.com/https://<你的用户名>.github.io/<仓库名>/list.json`
-> - `https://ghproxy.net/https://<你的用户名>.github.io/<仓库名>/list.json`
+| 地址形式 | 实测 | 缓存行为 |
+|---|---|---|
+| `https://<user>.github.io/<repo>/sources.json` | 0.5–1.1s | Pages 自己的 Fastly 缓存，push 后数分钟内一致 |
+| `https://cdn.jsdelivr.net/gh/<user>/<repo>@gh-pages/sources.json` | 1.3–2.6s | **按完整路径缓存**，`list.json` / `sources.json` / `index.min.json` 各自独立 |
+| `https://fastly.jsdelivr.net/gh/...@gh-pages/...` | 2.4s | 同上 |
+
+jsdelivr 的坑：`@branch` 形式的路径会长期回源旧内容，purge 也不一定立刻全节点生效；
+v17 发布时 `cdn.jsdelivr.net/.../sources.json` 停在 v16，而同一目录的 `list.json` 已是 v17。
+要固定版本只能用 `@<tag>`（如 `@gh-pages-v17`），但 tag 每版都变，不能当长期地址。
+**所以长期地址就用 Pages 直连。**
+
+> 国内直连 `github.io` 若失败，改用镜像前缀：
+> - `https://gh-proxy.com/https://<你的用户名>.github.io/<仓库名>/sources.json`
+> - `https://ghproxy.net/https://<你的用户名>.github.io/<仓库名>/sources.json`
 >
-> 镜像只加在 list.json 的 URL 上即可，里面的 .aix 是相对路径，会跟着同一个镜像走。
+> 镜像只加在列表 URL 上，里面的 .aix 是相对路径，会跟着同一前缀走。
+
+`sources.json` 与 `list.json` 内容完全一致；同时产出两个是为了在某个 CDN 路径缓存坏掉时有备选。
 
 ---
 
