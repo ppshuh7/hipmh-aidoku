@@ -38,7 +38,14 @@ pub const IMG_CDN_SMALL: &str = "https://hip-cf-s1.s3imgs.top";
 /// Settings key for the image line choice ("cf1" | "tx1").
 pub const SETTING_IMG_LINE: &str = "img_line";
 
-/// Settings key for how deep a chapter refresh goes ("latest" | "full").
+/// Settings key for how deep a chapter refresh goes ("full" | "latest").
+///
+/// NOTE: the shipped default is `full`. Aidoku calls `get_manga_update` for
+/// both the library refresh *and* when the user opens a manga's detail page,
+/// and `CoreDataManager.setChapters` deletes chapters that the source does not
+/// return — so a "latest only" source silently truncates every title to the
+/// newest page when the detail page is opened (seen in v16). Speed work must
+/// therefore come from elsewhere; `latest` stays available but is opt-in.
 pub const SETTING_REFRESH_DEPTH: &str = "refresh_depth";
 
 /// Resolve the image base URL for a settings value.
@@ -52,25 +59,15 @@ pub fn img_base(line: Option<&str>) -> &'static str {
 	}
 }
 
-/// How many chapters a refresh returns at most.
-///
-/// Aidoku's `setChapters` matches existing rows with a linear scan per
-/// chapter, so handing back a 700-entry list makes the *database* side
-/// quadratic; the extra entries are also re-sent over the wasm/JSON boundary
-/// for nothing. A window this wide covers every realistic update gap while
-/// keeping the payload ~1/15th of a full list.
-pub const CHAPTER_RETURN_LIMIT: usize = 200;
-
 /// Whether a refresh should keep paging through older chapters.
 ///
-/// `latest` (default): always exactly one page — the shelf refresh used to
-/// cost 14 pages × (round-trip + 1s sleep) per long title because Aidoku does
-/// not always hand the library's chapters back to the source, so the old
-/// "library already has chapters?" test silently degraded to a full crawl.
-/// `full`: the old behaviour, for when a title needs its history rebuilt.
+/// Default is `true` (full list): the detail page must receive every chapter,
+/// otherwise Aidoku prunes the ones we omit. `latest` only makes sense as a
+/// deliberate, temporary choice by a user who accepts a truncated list.
 pub fn refresh_full(depth: Option<&str>) -> bool {
-	matches!(depth, Some("full"))
+	!matches!(depth, Some("latest"))
 }
+
 
 pub const PAGE_SIZE: i32 = 20;
 

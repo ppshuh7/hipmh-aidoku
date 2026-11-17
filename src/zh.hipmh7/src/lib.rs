@@ -40,7 +40,7 @@ use crate::core::{
 	ApiChapter, ApiDetails, ApiManga, ApiResp, ChapterImages, ChapterListData, ListData,
 	Rating, SearchData,
 	chapter_key, decode_images, extract_mid, mid_b64, parse_iso_epoch, percent_encode,
-	short_hid_from_key, img_base, refresh_full, API, CHAPTER_RETURN_LIMIT, COVER_CDN,
+	short_hid_from_key, img_base, refresh_full, API, COVER_CDN,
 	PAGE_SIZE, SETTING_IMG_LINE, SETTING_REFRESH_DEPTH, SITE, remove_decoy,
 };
 
@@ -133,11 +133,13 @@ fn to_chapter(item: &ApiChapter) -> Option<Chapter> {
 }
 
 /// Retry budget for one get_json call, in whole seconds of sleeping.
-const RETRY_BUDGET_SECS: i32 = 4;
+const RETRY_BUDGET_SECS: i32 = 6;
 /// Max consecutive failures before giving up (also capped by the budget).
-const MAX_ATTEMPTS: i32 = 6;
+const MAX_ATTEMPTS: i32 = 8;
 
 fn get_json<T: for<'de> Deserialize<'de>>(url: &str) -> Result<T> {
+	// 6s covers the observed failure mode where a single page needed 6
+	// attempts; the caller still re-queues a page that never lands.
 	get_json_with(url, RETRY_BUDGET_SECS)
 }
 
@@ -426,41 +428,46 @@ impl Source for HipmhSource {
 			// 690-chapter title).
 			let known: Vec<Chapter> = manga.chapters.take().unwrap_or_default();
 
-			// Whether to keep paging through older chapters. Default is
-			// "latest only": Aidoku does not reliably pass the library's
-			// chapters back into the source during a shelf refresh, so keying
-			// the decision on `known.is_empty()` degraded into a full crawl
-			// (14 pages × (round-trip + 1s) on a 700-chapter title) for every
-			// long book in the library. The user can pick "完整" in settings.
+			// Whether to keep paging through older chapters. Default is full:
+			// Aidoku calls this same function for the library refresh *and*
+			// when the user opens a manga, and anything we do not return gets
+			// pruned from the DB — a "latest only" default truncated every
+			// title to its newest 50 chapters (v16 regression).
 			let full = refresh_full(defaults_get::<String>(SETTING_REFRESH_DEPTH).as_deref());
 
-			// Page 1 (newest first) is all an up-to-date series needs.
+			// Page 1 (newest first).
 			let mut chapters = match chapter_prefetch {
 				Some(r) => r?,
 				None => self.fetch_chapter_page(&mid_param, 1)?,
 			};
 			let total_pages = LAST_TOTAL_PAGES.load(Ordering::Relaxed);
 
-			// Deep backfill only in "完整" mode, and only when we have nothing
-			// to go on (a brand-new title, or the library asked for a rebuild).
-			if full && (known.is_empty() || chapters.len() >= CHAPTER_PER_PAGE as usize) && total_pages > 1 {
-				let mut page = 2;
-				let mut failed_pages = 0;
-				while page <= total_pages && page <= 200 {
+			// Full mode: page through everything. This is the only mode that
+			// guarantees the chapter list stays complete, so it is the default.
+			//
+			// The API drops a whole page now and then (measured: 4 of 14 pages
+			// needed extra attempts on a flaky afternoon). A failed page is
+			// retried a few times with a growing pause *and* the page is
+			// re-queued at the end of the run, because silently skipping it
+			// hands Aidoku an incomplete list and Aidoku prunes what we omit.
+			if full && total_pages > 1 {
+				let mut pending: Vec<i32> = (2..=total_pages.min(200)).collect();
+				let mut misses = 0;
+				while !pending.is_empty() && misses < 6 {
+					let page = pending.remove(0);
 					match self.fetch_chapter_page(&mid_param, page) {
 						Ok(more) => {
-							failed_pages = 0;
+							misses = 0;
 							chapters.extend(more);
+							sleep(1);
 						}
 						Err(_) => {
-							failed_pages += 1;
-							if failed_pages >= 3 {
-								break;
-							}
+							misses += 1;
+							// back off a little, then come back to this page
+							sleep(misses.min(3));
+							pending.push(page);
 						}
 					}
-					sleep(1);
-					page += 1;
 				}
 			}
 
@@ -490,16 +497,9 @@ impl Source for HipmhSource {
 					.total_cmp(&a.chapter_number.unwrap_or(0.0))
 			});
 
-			// Cap what we hand back. Aidoku's chapter upsert does a linear
-			// scan per chapter, so a 700-entry payload makes the DB side
-			// quadratic and drags the whole shelf refresh; 200 entries cover
-			// any realistic update gap while keeping old rows untouched (a
-			// chapter missing from our reply is not deleted by Aidoku — see
-			// CoreDataManager.setChapters, which only removes rows it can
-			// match *and* update).
-			if chapters.len() > CHAPTER_RETURN_LIMIT {
-				chapters.truncate(CHAPTER_RETURN_LIMIT);
-			}
+			// No truncation: Aidoku prunes any chapter the source omits, so a
+			// capped reply silently deletes history (v16 shipped a 200-cap and
+			// cost users their older chapters).
 			manga.chapters = Some(chapters);
 		}
 
@@ -737,13 +737,13 @@ impl DynamicSettings for HipmhSource {
 			SelectSetting {
 				key: Cow::Borrowed(SETTING_REFRESH_DEPTH),
 				title: Cow::Borrowed("刷新深度"),
-				values: vec![Cow::Borrowed("latest"), Cow::Borrowed("full")],
+				values: vec![Cow::Borrowed("full"), Cow::Borrowed("latest")],
 				titles: Some(vec![
-					Cow::Borrowed("仅最新（推荐·书架刷新快）"),
-					Cow::Borrowed("完整（重建历史章节）"),
+					Cow::Borrowed("完整（推荐·保留全部章节）"),
+					Cow::Borrowed("仅最新（会截断目录，慎用）"),
 				]),
 				auth_to_open: Some(false),
-				default: Some(String::from("latest")),
+				default: Some(String::from("full")),
 				..Default::default()
 			}
 			.into(),
@@ -752,6 +752,7 @@ impl DynamicSettings for HipmhSource {
 }
 
 register_source!(HipmhSource, ListingProvider, Home, DynamicFilters, DynamicSettings);
+
 
 
 
